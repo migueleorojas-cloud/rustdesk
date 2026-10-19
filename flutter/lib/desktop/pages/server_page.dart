@@ -532,10 +532,24 @@ class _CmHeaderState extends State<_CmHeader>
 
   final _time = 0.obs;
   Timer? _timer;
+  // SAT Remoto: técnico confirmado por SAT (null = no verificado)
+  SatTecnicoVerificado? _sat;
+
+  Future<void> _consultarSat() async {
+    var v = await satConsultarTecnico(client.peerId);
+    if (v == null) {
+      // la sesión puede abrirse en SAT unos segundos después de la solicitud
+      await Future.delayed(const Duration(seconds: 5));
+      if (!mounted) return;
+      v = await satConsultarTecnico(client.peerId);
+    }
+    if (mounted && v != null) setState(() => _sat = v);
+  }
 
   @override
   void initState() {
     super.initState();
+    _consultarSat();
     _timer = Timer.periodic(Duration(seconds: 1), (_) {
       if (client.authorized && !client.disconnected) {
         _time.value = _time.value + 1;
@@ -577,7 +591,7 @@ class _CmHeaderState extends State<_CmHeader>
               children: [
                 FittedBox(
                     child: Text(
-                  client.name,
+                  _sat?.nombre ?? client.name,
                   style: TextStyle(
                     color: white,
                     fontWeight: FontWeight.bold,
@@ -586,10 +600,14 @@ class _CmHeaderState extends State<_CmHeader>
                   ),
                   maxLines: 1,
                 )),
-                Text(
-                  'Nombre del solicitante (no verificado)',
-                  style: TextStyle(color: white70, fontSize: 12),
-                ),
+                if (_sat != null)
+                  SatSelloVerificado(orden: _sat!.orden)
+                      .marginOnly(top: 2, bottom: 2)
+                else
+                  Text(
+                    'Nombre del solicitante (no verificado)',
+                    style: TextStyle(color: white70, fontSize: 12),
+                  ),
                 FittedBox(
                   child: Text(
                     "ID: ${client.peerId}",
@@ -689,9 +707,9 @@ class _CmHeaderState extends State<_CmHeader>
           avatar: client.avatar,
           size: 56,
           borderRadius: 28,
-          fallback: SatAvatar(name: client.name, size: 56),
+          fallback: SatAvatar(name: _sat?.nombre ?? client.name, size: 56),
         ) ??
-        SatAvatar(name: client.name, size: 56);
+        SatAvatar(name: _sat?.nombre ?? client.name, size: 56);
   }
 
   Widget _buildInitialAvatar() {
