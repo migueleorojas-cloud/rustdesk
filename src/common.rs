@@ -2454,7 +2454,23 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
     ThrottledInterval::new(i)
 }
 
+/// SAT Remoto (OfficeTech): la configuración del cliente va incrustada en el ejecutable
+/// (`res/sat-remoto.json`), no en un `custom.txt` firmado por RustDesk. Así el nombre, el
+/// servidor y la llave no dependen de ningún archivo externo ni pueden cambiarse en el PC.
+const SAT_REMOTO_CONFIG: &str = include_str!("../res/sat-remoto.json");
+const SAT_REMOTO_LEGACY_APP_NAME: &str = "RustDesk";
+
 pub fn load_custom_client() {
+    match serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(
+        SAT_REMOTO_CONFIG,
+    ) {
+        Ok(data) => {
+            apply_custom_client(data);
+            migrate_legacy_config();
+            return;
+        }
+        Err(e) => log::error!("SAT Remoto: configuración incrustada inválida: {e}"),
+    }
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
@@ -2566,13 +2582,16 @@ pub fn read_custom_client(config: &str) {
         log::error!("Failed to dec custom client config");
         return;
     };
-    let Ok(mut data) =
+    let Ok(data) =
         serde_json::from_slice::<std::collections::HashMap<String, serde_json::Value>>(&data)
     else {
         log::error!("Failed to parse custom client config");
         return;
     };
+    apply_custom_client(data);
+}
 
+fn apply_custom_client(mut data: std::collections::HashMap<String, serde_json::Value>) {
     if let Some(app_name) = data.remove("app-name") {
         if let Some(app_name) = app_name.as_str() {
             *config::APP_NAME.write().unwrap() = app_name.to_owned();
@@ -2623,6 +2642,66 @@ pub fn read_custom_client(config: &str) {
                 .insert(k, v.to_owned());
         };
     }
+}
+
+/// SAT Remoto: al cambiar el nombre de la aplicación, RustDesk usa otra carpeta de
+/// configuración y el equipo recibiría un ID nuevo. Si todavía no hay configuración propia
+/// y sí existe la de RustDesk (mismo usuario o mismo perfil del servicio), se copia una sola
+/// vez renombrando `RustDesk*.toml` → `<AppName>*.toml`. Así el ID registrado en SAT no cambia.
+fn migrate_legacy_config() {
+    let app_name = config::APP_NAME.read().unwrap().clone();
+    if app_name == SAT_REMOTO_LEGACY_APP_NAME {
+        return;
+    }
+    let new_dir = Config::path("");
+    let new_cfg = new_dir.join(format!("{app_name}.toml"));
+    if new_cfg.exists() {
+        return;
+    }
+    let old_dir = {
+        *config::APP_NAME.write().unwrap() = SAT_REMOTO_LEGACY_APP_NAME.to_owned();
+        let d = Config::path("");
+        *config::APP_NAME.write().unwrap() = app_name.clone();
+        d
+    };
+    let old_cfg = old_dir.join(format!("{SAT_REMOTO_LEGACY_APP_NAME}.toml"));
+    if old_dir == new_dir || !old_cfg.is_file() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&new_dir) {
+        log::error!("SAT Remoto: no se pudo crear {:?}: {e}", new_dir);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&old_dir) else {
+        return;
+    };
+    let mut n = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|x| x.to_str()) else {
+            continue;
+        };
+        let target = if let Some(rest) = name.strip_prefix(SAT_REMOTO_LEGACY_APP_NAME) {
+            format!("{app_name}{rest}")
+        } else {
+            name.to_owned()
+        };
+        let dst = new_dir.join(target);
+        if dst.exists() {
+            continue;
+        }
+        match std::fs::copy(&path, &dst) {
+            Ok(_) => n += 1,
+            Err(e) => log::warn!("SAT Remoto: no se pudo copiar {:?}: {e}", path),
+        }
+    }
+    log::info!(
+        "SAT Remoto: configuración de {} migrada ({} archivos) de {:?} a {:?}",
+        SAT_REMOTO_LEGACY_APP_NAME, n, old_dir, new_dir
+    );
 }
 
 #[inline]
