@@ -601,9 +601,15 @@ class _CmHeaderState extends State<_CmHeader>
                   maxLines: 1,
                 )),
                 if (_sat != null)
-                  SatSelloVerificado(orden: _sat!.orden)
-                      .marginOnly(top: 2, bottom: 2)
-                else
+                  SatSelloVerificado(
+                          orden: _sat!.orden, registrado: _sat!.registrado)
+                      .marginOnly(top: 2, bottom: 2),
+                if (_sat != null && !_sat!.registrado)
+                  Text(
+                    'Desde el equipo «${client.name}» (no registrado)',
+                    style: TextStyle(color: white70, fontSize: 12),
+                  ),
+                if (_sat == null)
                   Text(
                     'Nombre del solicitante (no verificado)',
                     style: TextStyle(color: white70, fontSize: 12),
