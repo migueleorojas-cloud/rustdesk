@@ -532,25 +532,21 @@ class _CmHeaderState extends State<_CmHeader>
 
   final _time = 0.obs;
   Timer? _timer;
-  // SAT Remoto: técnico confirmado por SAT (null = no verificado)
-  SatTecnicoVerificado? _sat;
-
-  Future<void> _consultarSat() async {
-    var v = await satConsultarTecnico(client.peerId);
-    if (v == null) {
-      // la sesión puede abrirse en SAT unos segundos después de la solicitud
-      await Future.delayed(const Duration(seconds: 5));
-      if (!mounted) return;
-      v = await satConsultarTecnico(client.peerId);
-    }
-    if (mounted && v != null) setState(() => _sat = v);
-  }
+  // SAT Remoto #6: autorización en SAT de esta conexión (técnico, vigencia,
+  // solicitud al administrador y corte). Ver SatControl en sat_remoto.dart.
+  late final SatControl _ctl =
+      SatControl.de(client.id, client.peerId, client.name);
+  // técnico confirmado por SAT (null = no verificado)
+  SatTecnicoVerificado? get _sat => _ctl.tecnico.value;
 
   @override
   void initState() {
     super.initState();
-    _consultarSat();
+    _ctl.marcarConexion(
+        autorizada: client.authorized, desconectada: client.disconnected);
     _timer = Timer.periodic(Duration(seconds: 1), (_) {
+      _ctl.marcarConexion(
+          autorizada: client.authorized, desconectada: client.disconnected);
       if (client.authorized && !client.disconnected) {
         _time.value = _time.value + 1;
       }
@@ -564,6 +560,7 @@ class _CmHeaderState extends State<_CmHeader>
   @override
   void dispose() {
     _timer?.cancel();
+    SatControl.quitar(client.id);
     super.dispose();
   }
 
@@ -572,7 +569,7 @@ class _CmHeaderState extends State<_CmHeader>
     super.build(context);
     const white = SatColors.text; // SAT Remoto: texto oscuro sobre tarjeta clara
     const white70 = SatColors.secondary;
-    return Container(
+    return Obx(() => Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12.0),
         color: SatColors.surface,
@@ -670,7 +667,10 @@ class _CmHeaderState extends State<_CmHeader>
                         ),
                       )
                   ],
-                ))
+                )),
+                SatAvisoAutorizacion(
+                    control: _ctl,
+                    conectado: client.authorized && !client.disconnected),
               ],
             ),
           ),
@@ -702,7 +702,7 @@ class _CmHeaderState extends State<_CmHeader>
           )
         ],
       ),
-    );
+    ));
   }
 
   @override
@@ -1180,11 +1180,13 @@ class _CmControlPanel extends StatelessWidget {
                 key: kOptionHideElevateButtonInAcceptWindow) !=
             'Y';
     final showAccept = model.approveMode != 'password';
-    return Column(
+    // SAT Remoto #6: sin sesión en SAT no se ofrece «Aceptar» (ver SatControl).
+    final sat = SatControl.de(client.id, client.peerId, client.name);
+    return Obx(() => Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Offstage(
-          offstage: !showElevation || !showAccept,
+          offstage: !showElevation || !showAccept || !sat.puedeAceptar,
           child: buildButton(context, color: Colors.green[700], onClick: () {
             handleAccept(context);
             handleElevate(context);
@@ -1213,7 +1215,7 @@ class _CmControlPanel extends StatelessWidget {
                 textColor: SatColors.text,
               ),
             ),
-            if (showAccept)
+            if (showAccept && sat.puedeAceptar)
               Expanded(
                 child: Column(
                   children: [
@@ -1230,10 +1232,38 @@ class _CmControlPanel extends StatelessWidget {
                   ],
                 ),
               ),
+            if (sat.estado.value == SatAut.sinAutorizacion ||
+                sat.estado.value == SatAut.vencida)
+              Expanded(
+                child: buildButton(
+                  context,
+                  color: sat.ocupado.value
+                      ? SatColors.disabledFill
+                      : SatColors.brand,
+                  onClick: () => sat.pedir(),
+                  text: sat.ocupado.value
+                      ? 'Enviando…'
+                      : 'Pedir autorización',
+                  textColor: SatColors.header,
+                ),
+              ),
+            if (sat.estado.value == SatAut.consultando ||
+                sat.estado.value == SatAut.pidiendo)
+              Expanded(
+                child: buildButton(
+                  context,
+                  color: SatColors.disabledFill,
+                  onClick: () {},
+                  text: sat.estado.value == SatAut.consultando
+                      ? 'Verificando…'
+                      : 'Esperando aprobación…',
+                  textColor: SatColors.secondary,
+                ),
+              ),
           ],
         ),
       ],
-    ).marginOnly(bottom: buttonBottomMargin);
+    ).marginOnly(bottom: buttonBottomMargin));
   }
 
   Widget buildButton(BuildContext context,
