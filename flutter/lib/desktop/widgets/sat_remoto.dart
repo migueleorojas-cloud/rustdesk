@@ -4,9 +4,15 @@
 // Solo presentación: toda acción llama a los mismos métodos del motor que ya
 // usaba RustDesk (aceptar, rechazar, permisos, desconectar).
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+
+import '../../models/platform_model.dart';
 
 class SatColors {
   static const brand = Color(0xFFF5920C);
@@ -321,4 +327,78 @@ class SatIllustration extends StatelessWidget {
 
 Future<void> satOpenPortal() async {
   await launchUrl(Uri.parse(kSatPortalUrl));
+}
+
+/// Técnico confirmado por SAT para la solicitud en curso.
+class SatTecnicoVerificado {
+  final String nombre;
+  final String orden;
+  const SatTecnicoVerificado(this.nombre, this.orden);
+}
+
+/// Pregunta a SAT si quien pide la conexión ([peerId]) es el técnico de una sesión
+/// remota abierta sobre este equipo (remoto_api.php?ep=quien). La dirección sale de la
+/// opción audit-server que deja el agente OfficeTech; si no está, se usa el portal SAT.
+/// Cualquier error o respuesta sin coincidencia devuelve null: la ventana sigue
+/// mostrando «no verificado». Nunca autoriza nada: solo cambia lo que se muestra.
+Future<SatTecnicoVerificado?> satConsultarTecnico(String peerId) async {
+  try {
+    final peer = peerId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    if (peer.isEmpty) return null;
+    final myId = (await bind.mainGetMyId()).replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    if (myId.isEmpty) return null;
+    var base = (await bind.mainGetOption(key: 'audit-server')).trim();
+    if (!base.startsWith('https://')) {
+      base = '$kSatPortalUrl/remoto_api.php';
+    }
+    final uri0 = Uri.parse(base);
+    final uri = uri0.replace(
+        path: uri0.path.replaceAll(RegExp(r'/api/audit.*$'), ''),
+        queryParameters: {'ep': 'quien', 'id': myId, 'peer': peer});
+    final r = await http.get(uri).timeout(const Duration(seconds: 8));
+    if (r.statusCode != 200) return null;
+    final j = jsonDecode(utf8.decode(r.bodyBytes));
+    if (j is Map && j['verificado'] == true) {
+      final nombre = (j['tecnico'] ?? '').toString().trim();
+      if (nombre.isEmpty) return null;
+      return SatTecnicoVerificado(nombre, (j['orden'] ?? '').toString().trim());
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Sello verde «Técnico verificado por SAT» (solo cuando SAT lo confirmó).
+class SatSelloVerificado extends StatelessWidget {
+  final String orden;
+  const SatSelloVerificado({Key? key, required this.orden}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF3),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: SatColors.success.withOpacity(0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.verified_user, size: 14, color: SatColors.success),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              orden.isEmpty
+                  ? 'Técnico verificado por SAT'
+                  : 'Técnico verificado por SAT · Orden $orden',
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: SatColors.success),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
