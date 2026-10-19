@@ -329,11 +329,15 @@ Future<void> satOpenPortal() async {
   await launchUrl(Uri.parse(kSatPortalUrl));
 }
 
-/// Técnico confirmado por SAT para la solicitud en curso.
+/// Técnico que SAT reconoce para la solicitud en curso.
+/// [registrado] = el ID que se conecta es el del perfil del técnico (verificado);
+/// si es false, el técnico está en un PC prestado y SAT solo confirma que tiene
+/// una sesión abierta en esa orden.
 class SatTecnicoVerificado {
   final String nombre;
   final String orden;
-  const SatTecnicoVerificado(this.nombre, this.orden);
+  final bool registrado;
+  const SatTecnicoVerificado(this.nombre, this.orden, {this.registrado = true});
 }
 
 /// Pregunta a SAT si quien pide la conexión ([peerId]) es el técnico de una sesión
@@ -358,43 +362,52 @@ Future<SatTecnicoVerificado?> satConsultarTecnico(String peerId) async {
     final r = await http.get(uri).timeout(const Duration(seconds: 8));
     if (r.statusCode != 200) return null;
     final j = jsonDecode(utf8.decode(r.bodyBytes));
-    if (j is Map && j['verificado'] == true) {
+    if (j is Map) {
+      final registrado = j['verificado'] == true;
+      if (!registrado && j['nivel'] != 'sesion') return null;
       final nombre = (j['tecnico'] ?? '').toString().trim();
       if (nombre.isEmpty) return null;
-      return SatTecnicoVerificado(nombre, (j['orden'] ?? '').toString().trim());
+      return SatTecnicoVerificado(nombre, (j['orden'] ?? '').toString().trim(),
+          registrado: registrado);
     }
   } catch (_) {}
   return null;
 }
 
-/// Sello verde «Técnico verificado por SAT» (solo cuando SAT lo confirmó).
+/// Sello bajo el nombre del técnico (solo cuando SAT respondió).
+/// Verde «Técnico verificado por SAT» si el ID es el registrado del técnico;
+/// azul «Sesión abierta en SAT» si se conecta desde un PC prestado.
 class SatSelloVerificado extends StatelessWidget {
   final String orden;
-  const SatSelloVerificado({Key? key, required this.orden}) : super(key: key);
+  final bool registrado;
+  const SatSelloVerificado(
+      {Key? key, required this.orden, this.registrado = true})
+      : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final color = registrado ? SatColors.success : SatColors.info;
+    final fondo = registrado ? const Color(0xFFECFDF3) : SatColors.infoSurface;
+    final base =
+        registrado ? 'Técnico verificado por SAT' : 'Sesión abierta en SAT';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: const Color(0xFFECFDF3),
+        color: fondo,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: SatColors.success.withOpacity(0.5)),
+        border: Border.all(color: color.withOpacity(0.5)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.verified_user, size: 14, color: SatColors.success),
+          Icon(registrado ? Icons.verified_user : Icons.assignment_turned_in,
+              size: 14, color: color),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
-              orden.isEmpty
-                  ? 'Técnico verificado por SAT'
-                  : 'Técnico verificado por SAT · Orden $orden',
-              style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: SatColors.success),
+              orden.isEmpty ? base : '$base · Orden $orden',
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.bold, color: color),
             ),
           ),
         ],
