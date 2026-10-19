@@ -3,7 +3,7 @@
   "override-settings": {
     "custom-rendezvous-server": "remoto.officetech.com.co",
     "relay-server": "remoto.officetech.com.co",
-    "key": "PEGUE_AQUI_LA_LLAVE_PUBLICA_DEL_CORREDOR",
+    "key": "qmMD4H1T1NijvZdr7H88nvj4qy6JzIOy8Nt0xEIo72k=",
     "api-server": "",
     "enable-check-update": "N",
     "allow-auto-update": "N"
