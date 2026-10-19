@@ -1,0 +1,18 @@
+{
+  "app-name": "SAT-Remoto",
+  "override-settings": {
+    "custom-rendezvous-server": "remoto.officetech.com.co",
+    "relay-server": "remoto.officetech.com.co",
+    "key": "PEGUE_AQUI_LA_LLAVE_PUBLICA_DEL_CORREDOR",
+    "api-server": "",
+    "enable-check-update": "N",
+    "allow-auto-update": "N"
+  },
+  "default-settings": {
+    "display-name": "Técnico OfficeTech",
+    "hide-server-settings": "Y",
+    "hide-network-settings": "Y",
+    "hide-help-cards": "Y",
+    "hide-username-on-card": "Y"
+  }
+}
