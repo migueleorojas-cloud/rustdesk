@@ -21,6 +21,7 @@ import '../../common/widgets/chat_page.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
+import '../widgets/sat_remoto.dart';
 
 /// Set only by this window's own close control, and only once the user has confirmed. Any other
 /// way the window can go - a session logout closing every window, the window manager, a native
@@ -361,28 +362,128 @@ class ConnectionManagerState extends State<ConnectionManager>
 }
 
 Widget buildConnectionCard(Client client) {
+  // SAT Remoto: estados 02 «Solicitud de conexión» y 03 «Sesión activa».
   return Consumer<ServerModel>(
-    builder: (context, value, child) => Column(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      key: ValueKey(client.id),
-      children: [
-        _CmHeader(client: client),
-        client.type_() == ClientType.file ||
-                client.type_() == ClientType.portForward ||
-                client.type_() == ClientType.terminal ||
-                client.disconnected
-            ? Offstage()
-            : _PrivilegeBoard(client: client),
-        Expanded(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: _CmControlPanel(client: client),
-          ),
-        )
-      ],
-    ).paddingSymmetric(vertical: 4.0, horizontal: 8.0),
+    builder: (context, value, child) {
+      final showPrivileges = !(client.type_() == ClientType.file ||
+          client.type_() == ClientType.portForward ||
+          client.type_() == ClientType.terminal ||
+          client.disconnected);
+      return Container(
+        key: ValueKey(client.id),
+        color: SatColors.body,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SatHeader(height: 56),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _SatCmTitle(client: client),
+                    _CmHeader(client: client),
+                    if (showPrivileges && client.authorized)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: SatColors.infoSurface,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: const [
+                            Icon(Icons.desktop_windows_outlined,
+                                color: SatColors.info),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                  'Su pantalla está siendo compartida con el técnico.',
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: SatColors.info)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (showPrivileges) _PrivilegeBoard(client: client),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: _CmControlPanel(client: client),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Text(
+                client.authorized
+                    ? (client.disconnected
+                        ? 'La conexión terminó.'
+                        : 'Puede finalizar el acceso en cualquier momento.')
+                    : 'Acepte solo si reconoce esta solicitud.',
+                style:
+                    const TextStyle(fontSize: 13, color: SatColors.secondary),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
   );
+}
+
+/// Título según el estado real de la conexión.
+class _SatCmTitle extends StatelessWidget {
+  final Client client;
+  const _SatCmTitle({Key? key, required this.client}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!client.authorized) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text('Solicitud de conexión',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: SatColors.text)),
+            SizedBox(height: 4),
+            Text('Un técnico solicita acceso a su equipo.',
+                style: TextStyle(fontSize: 15, color: SatColors.secondary)),
+          ],
+        ),
+      );
+    }
+    if (client.disconnected) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 4),
+        child: SatStatusLine(
+            text: 'Conexión finalizada', color: SatColors.secondary),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          SatStatusLine(text: 'Sesión activa', color: SatColors.success),
+          SizedBox(height: 8),
+          Text('Está recibiendo soporte',
+              style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: SatColors.text)),
+        ],
+      ),
+    );
+  }
 }
 
 class _AppIcon extends StatelessWidget {
@@ -455,25 +556,16 @@ class _CmHeaderState extends State<_CmHeader>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    const white = SatColors.text; // SAT Remoto: texto oscuro sobre tarjeta clara
+    const white70 = SatColors.secondary;
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10.0),
-        gradient: LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [
-            Color(0xff00bfe1),
-            Color(0xff0071ff),
-          ],
-        ),
+        borderRadius: BorderRadius.circular(12.0),
+        color: SatColors.surface,
+        border: Border.all(color: SatColors.border),
       ),
-      margin: EdgeInsets.symmetric(horizontal: 5.0, vertical: 10.0),
-      padding: EdgeInsets.only(
-        top: 10.0,
-        bottom: 10.0,
-        left: 10.0,
-        right: 5.0,
-      ),
+      margin: EdgeInsets.symmetric(vertical: 10.0),
+      padding: EdgeInsets.all(12.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -487,45 +579,49 @@ class _CmHeaderState extends State<_CmHeader>
                     child: Text(
                   client.name,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: white,
                     fontWeight: FontWeight.bold,
                     fontSize: 20,
                     overflow: TextOverflow.ellipsis,
                   ),
                   maxLines: 1,
                 )),
+                Text(
+                  'Nombre del solicitante (no verificado)',
+                  style: TextStyle(color: white70, fontSize: 12),
+                ),
                 FittedBox(
                   child: Text(
-                    "(${client.peerId})",
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                    "ID: ${client.peerId}",
+                    style: TextStyle(color: white, fontSize: 14),
                   ),
                 ),
                 if (client.type_() == ClientType.terminal)
                   FittedBox(
                     child: Text(
                       translate("Terminal"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: white70, fontSize: 12),
                     ),
                   ),
                 if (client.type_() == ClientType.file)
                   FittedBox(
                     child: Text(
                       translate("Transfer file"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: white70, fontSize: 12),
                     ),
                   ),
                 if (client.type_() == ClientType.camera)
                   FittedBox(
                     child: Text(
                       translate("View camera"),
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: white70, fontSize: 12),
                     ),
                   ),
                 if (client.portForward.isNotEmpty)
                   FittedBox(
                     child: Text(
                       "Port Forward: ${client.portForward}",
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                      style: TextStyle(color: white70, fontSize: 12),
                     ),
                   ),
                 SizedBox(height: 10.0),
@@ -535,10 +631,10 @@ class _CmHeaderState extends State<_CmHeader>
                     Text(
                       client.authorized
                           ? client.disconnected
-                              ? translate("Disconnected")
-                              : translate("Connected")
-                          : "${translate("Request access to your device")}...",
-                      style: TextStyle(color: Colors.white),
+                              ? 'Desconectado'
+                              : 'Conectado'
+                          : 'Esperando su autorización…',
+                      style: TextStyle(color: white),
                     ).marginOnly(right: 8.0),
                     if (client.authorized)
                       Obx(
@@ -546,7 +642,7 @@ class _CmHeaderState extends State<_CmHeader>
                           formatDurationToTime(
                             Duration(seconds: _time.value),
                           ),
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: white),
                         ),
                       )
                   ],
@@ -568,9 +664,15 @@ class _CmHeaderState extends State<_CmHeader>
                       .toggleCMChatPage(MessageKey(client.peerId, client.id));
                 }
               }),
-              icon: SvgPicture.asset(client.type_() == ClientType.file
-                  ? 'assets/file_transfer.svg'
-                  : 'assets/chat2.svg'),
+              tooltip: client.type_() == ClientType.file
+                  ? 'Archivos transferidos'
+                  : 'Abrir chat',
+              icon: SvgPicture.asset(
+                  client.type_() == ClientType.file
+                      ? 'assets/file_transfer.svg'
+                      : 'assets/chat2.svg',
+                  colorFilter:
+                      const ColorFilter.mode(SatColors.text, BlendMode.srcIn)),
               splashRadius: kDesktopIconButtonSplashRadius,
             ),
           )
@@ -585,11 +687,11 @@ class _CmHeaderState extends State<_CmHeader>
   Widget _buildClientAvatar() {
     return buildAvatarWidget(
           avatar: client.avatar,
-          size: 70,
-          borderRadius: 15,
-          fallback: _buildInitialAvatar(),
+          size: 56,
+          borderRadius: 28,
+          fallback: SatAvatar(name: client.name, size: 56),
         ) ??
-        _buildInitialAvatar();
+        SatAvatar(name: client.name, size: 56);
   }
 
   Widget _buildInitialAvatar() {
@@ -659,206 +761,160 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
     );
   }
 
+  /// SAT Remoto: los permisos que soporta el motor, como casillas reales.
+  /// Cada cambio llama a cmSwitchPermission (igual que los iconos originales) y la
+  /// casilla muestra el valor que guarda el cliente, no uno supuesto.
+  void _satSet(String name, bool enabled, void Function(bool) apply) {
+    checkClickTime(client.id, () {
+      bind.cmSwitchPermission(connId: client.id, name: name, enabled: enabled);
+      setState(() => apply(enabled));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final crossAxisCount = 4;
-    final spacing = 10.0;
-    final canModifyPermission =
+    final canModify =
         bind.mainGetBuildinOption(key: kOptionEnablePermChangeInAcceptWindow) !=
             'N';
-    return Container(
-      width: double.infinity,
-      height: 160.0,
-      margin: EdgeInsets.all(5.0),
-      padding: EdgeInsets.all(5.0),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10.0),
-        color: Theme.of(context).colorScheme.background,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            spreadRadius: 1,
-            blurRadius: 1,
-            offset: Offset(0, 1.5),
-          ),
-        ],
+    ValueChanged<bool>? on(String name, void Function(bool) apply) =>
+        canModify ? (v) => _satSet(name, v, apply) : null;
+    final isCamera = client.type_() == ClientType.camera;
+
+    final principales = <Widget>[
+      if (!isCamera)
+        const SatPermRow(
+          title: 'Ver pantalla',
+          subtitle: 'Es parte de esta conexión de escritorio remoto.',
+          value: true,
+          onChanged: null,
+        ),
+      if (isCamera)
+        const SatPermRow(
+          title: 'Ver cámara',
+          subtitle: 'El técnico solicitó ver la cámara de este equipo.',
+          value: true,
+          onChanged: null,
+        ),
+      if (!isCamera)
+        SatPermRow(
+          title: 'Controlar teclado y mouse',
+          subtitle: client.keyboard
+              ? 'El técnico podrá usar su teclado y mouse.'
+              : 'El técnico solo podrá ver su pantalla.',
+          value: client.keyboard,
+          onChanged: on('keyboard', (v) => client.keyboard = v),
+        ),
+      if (!isCamera)
+        SatPermRow(
+          title: 'Transferir archivos',
+          subtitle: client.file
+              ? 'El técnico podrá copiar archivos desde y hacia este equipo.'
+              : 'Sin acceso a archivos durante esta sesión.',
+          value: client.file,
+          onChanged: on('file', (v) => client.file = v),
+        ),
+      if (!isCamera)
+        SatPermRow(
+          title: 'Compartir portapapeles',
+          subtitle: client.clipboard
+              ? 'Lo que copie se compartirá con el técnico.'
+              : 'Sin acceso a su portapapeles.',
+          value: client.clipboard,
+          onChanged: on('clipboard', (v) => client.clipboard = v),
+        ),
+    ];
+    final adicionales = <Widget>[
+      SatPermRow(
+        title: 'Escuchar el audio del equipo',
+        subtitle: 'El técnico oirá el sonido de este equipo.',
+        value: client.audio,
+        onChanged: on('audio', (v) => client.audio = v),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Text(
-            translate("Permissions"),
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ).marginOnly(left: 4.0, bottom: 8.0),
-          Expanded(
-            child: GridView.count(
-              crossAxisCount: crossAxisCount,
-              padding: EdgeInsets.symmetric(horizontal: spacing),
-              mainAxisSpacing: spacing,
-              crossAxisSpacing: spacing,
-              children: client.type_() == ClientType.camera
-                  ? [
-                      buildPermissionIcon(
-                        client.audio,
-                        Icons.volume_up_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "audio",
-                              enabled: enabled);
-                          setState(() {
-                            client.audio = enabled;
-                          });
-                        },
-                        translate('Enable audio'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.recording,
-                        Icons.videocam_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "recording",
-                              enabled: enabled);
-                          setState(() {
-                            client.recording = enabled;
-                          });
-                        },
-                        translate('Enable recording session'),
-                        canModify: canModifyPermission,
-                      ),
-                    ]
-                  : [
-                      buildPermissionIcon(
-                        client.keyboard,
-                        Icons.keyboard,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "keyboard",
-                              enabled: enabled);
-                          setState(() {
-                            client.keyboard = enabled;
-                          });
-                        },
-                        translate('Enable keyboard/mouse'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.clipboard,
-                        Icons.assignment_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "clipboard",
-                              enabled: enabled);
-                          setState(() {
-                            client.clipboard = enabled;
-                          });
-                        },
-                        translate('Enable clipboard'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.audio,
-                        Icons.volume_up_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "audio",
-                              enabled: enabled);
-                          setState(() {
-                            client.audio = enabled;
-                          });
-                        },
-                        translate('Enable audio'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.file,
-                        Icons.upload_file_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "file",
-                              enabled: enabled);
-                          setState(() {
-                            client.file = enabled;
-                          });
-                        },
-                        translate('Enable file copy and paste'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.restart,
-                        Icons.restart_alt_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "restart",
-                              enabled: enabled);
-                          setState(() {
-                            client.restart = enabled;
-                          });
-                        },
-                        translate('Enable remote restart'),
-                        canModify: canModifyPermission,
-                      ),
-                      buildPermissionIcon(
-                        client.recording,
-                        Icons.videocam_rounded,
-                        (enabled) {
-                          bind.cmSwitchPermission(
-                              connId: client.id,
-                              name: "recording",
-                              enabled: enabled);
-                          setState(() {
-                            client.recording = enabled;
-                          });
-                        },
-                        translate('Enable recording session'),
-                        canModify: canModifyPermission,
-                      ),
-                      // only windows support block input
-                      if (isWindows)
-                        buildPermissionIcon(
-                          client.blockInput,
-                          Icons.block,
-                          (enabled) {
-                            bind.cmSwitchPermission(
-                                connId: client.id,
-                                name: "block_input",
-                                enabled: enabled);
-                            setState(() {
-                              client.blockInput = enabled;
-                            });
-                          },
-                          translate('Enable blocking user input'),
-                          canModify: canModifyPermission,
-                        ),
-                      if (bind.mainSupportedPrivacyModeImpls() != '[]')
-                        buildPermissionIcon(
-                          client.privacyMode,
-                          Icons.visibility_off,
-                          (enabled) {
-                            bind.cmSwitchPermission(
-                                connId: client.id,
-                                name: "privacy_mode",
-                                enabled: enabled);
-                            setState(() {
-                              client.privacyMode = enabled;
-                            });
-                          },
-                          translate('Enable privacy mode'),
-                          canModify: canModifyPermission,
-                        )
-                    ],
+      SatPermRow(
+        title: 'Grabar la sesión',
+        subtitle: 'El técnico podrá grabar la sesión en su equipo.',
+        value: client.recording,
+        onChanged: on('recording', (v) => client.recording = v),
+      ),
+      if (!isCamera)
+        SatPermRow(
+          title: 'Reiniciar el equipo',
+          subtitle: 'El técnico podrá reiniciar este equipo de forma remota.',
+          value: client.restart,
+          onChanged: on('restart', (v) => client.restart = v),
+        ),
+      // only windows support block input
+      if (!isCamera && isWindows)
+        SatPermRow(
+          title: 'Bloquear su teclado y mouse',
+          subtitle: 'Mientras dure, no podrá usar su teclado ni su mouse.',
+          value: client.blockInput,
+          onChanged: on('block_input', (v) => client.blockInput = v),
+        ),
+      if (!isCamera && bind.mainSupportedPrivacyModeImpls() != '[]')
+        SatPermRow(
+          title: 'Modo privacidad',
+          subtitle: 'Oculta la pantalla de este equipo mientras trabaja el técnico.',
+          value: client.privacyMode,
+          onChanged: on('privacy_mode', (v) => client.privacyMode = v),
+        ),
+    ];
+    final activos = adicionales
+        .whereType<SatPermRow>()
+        .where((w) => w.value)
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Divider(height: 1, color: SatColors.border),
+        const SizedBox(height: 10),
+        Text(
+          client.authorized ? 'Permisos de la sesión' : 'Permisos para esta sesión',
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: SatColors.text),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: BoxDecoration(
+            border: Border.all(color: SatColors.border),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...principales,
+              Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                  childrenPadding: EdgeInsets.zero,
+                  title: Text(
+                    activos > 0
+                        ? 'Más permisos ($activos activos)'
+                        : 'Más permisos',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: SatColors.secondary),
+                  ),
+                  children: adicionales,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (!canModify)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Estos permisos los fija la configuración de su equipo.',
+              style: TextStyle(fontSize: 12, color: SatColors.secondary),
             ),
           ),
-        ],
-      ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 }
@@ -1034,19 +1090,40 @@ class _CmControlPanel extends StatelessWidget {
             textColor: Colors.white,
           ),
         ),
+        if (client.type_() == ClientType.remote ||
+            client.type_() == ClientType.camera)
+          Row(
+            children: [
+              Expanded(
+                child: buildButton(context,
+                    color: Colors.white,
+                    border: Border.all(color: SatColors.header, width: 1.5),
+                    onClick: () => gFFI.chatModel
+                        .toggleCMChatPage(MessageKey(client.peerId, client.id)),
+                    text: 'Abrir chat',
+                    icon: Icon(
+                      Icons.chat_bubble_outline_rounded,
+                      color: SatColors.text,
+                      size: 18,
+                    ),
+                    textColor: SatColors.text),
+              ),
+            ],
+          ),
         Row(
           children: [
             Expanded(
               child: buildButton(context,
-                  color: Colors.redAccent,
+                  color: SatColors.dangerSurface,
+                  border: Border.all(color: SatColors.danger, width: 1.5),
                   onClick: handleDisconnect,
-                  text: 'Disconnect',
+                  text: 'Finalizar conexión',
                   icon: Icon(
-                    Icons.link_off_rounded,
-                    color: Colors.white,
-                    size: 14,
+                    Icons.stop_rounded,
+                    color: SatColors.danger,
+                    size: 18,
                   ),
-                  textColor: Colors.white),
+                  textColor: SatColors.danger),
             ),
           ],
         )
@@ -1060,10 +1137,11 @@ class _CmControlPanel extends StatelessWidget {
       children: [
         Expanded(
             child: buildButton(context,
-                color: MyTheme.accent,
+                color: Colors.white,
+                border: Border.all(color: SatColors.header, width: 1.5),
                 onClick: handleClose,
-                text: 'Close',
-                textColor: Colors.white)),
+                text: 'Cerrar',
+                textColor: SatColors.text)),
       ],
     ).marginOnly(bottom: buttonBottomMargin);
   }
@@ -1100,33 +1178,34 @@ class _CmControlPanel extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // SAT Remoto: Rechazar a la izquierda, Aceptar (naranja) a la derecha.
+            Expanded(
+              child: buildButton(
+                context,
+                color: Colors.white,
+                border: Border.all(color: SatColors.header, width: 1.5),
+                onClick: handleDisconnect,
+                text: 'Rechazar',
+                textColor: SatColors.text,
+              ),
+            ),
             if (showAccept)
               Expanded(
                 child: Column(
                   children: [
                     buildButton(
                       context,
-                      color: MyTheme.accent,
+                      color: SatColors.brand,
                       onClick: () {
                         handleAccept(context);
                         windowManager.minimize();
                       },
-                      text: 'Accept',
-                      textColor: Colors.white,
+                      text: 'Aceptar conexión',
+                      textColor: SatColors.header,
                     ),
                   ],
                 ),
               ),
-            Expanded(
-              child: buildButton(
-                context,
-                color: Colors.transparent,
-                border: Border.all(color: Colors.grey),
-                onClick: handleDisconnect,
-                text: 'Cancel',
-                textColor: null,
-              ),
-            ),
           ],
         ),
       ],
@@ -1144,28 +1223,35 @@ class _CmControlPanel extends StatelessWidget {
       GestureTapDownCallback? onTapDown}) {
     assert(!(onClick == null && onTapDown == null));
     Widget textWidget;
+    // SAT Remoto: texto en negrita 15, botón de 44 px y radio 8 (design-tokens).
+    final textStyle = TextStyle(
+        color: textColor, fontSize: 15, fontWeight: FontWeight.bold);
     if (icon != null) {
-      textWidget = Text(
-        translate(text),
-        style: TextStyle(color: textColor),
-        textAlign: TextAlign.center,
+      textWidget = Flexible(
+        child: Text(
+          translate(text),
+          style: textStyle,
+          textAlign: TextAlign.center,
+        ),
       );
     } else {
       textWidget = Expanded(
         child: Text(
           translate(text),
-          style: TextStyle(color: textColor),
+          style: textStyle,
           textAlign: TextAlign.center,
         ),
       );
     }
-    final borderRadius = BorderRadius.circular(10.0);
+    final borderRadius = BorderRadius.circular(8.0);
     final btn = Container(
-      height: 28,
+      height: 44,
       decoration: BoxDecoration(
           color: color, borderRadius: borderRadius, border: border),
       child: InkWell(
         borderRadius: borderRadius,
+        focusColor: SatColors.focus.withOpacity(0.18),
+        hoverColor: Colors.black.withOpacity(0.05),
         onTap: () {
           if (onClick == null) return;
           checkClickTime(client.id, onClick);

@@ -3021,7 +3021,9 @@ int versionCmp(String v1, String v2) {
 }
 
 String getWindowName({WindowType? overrideType}) {
-  final name = bind.mainGetAppNameSync();
+  // SAT Remoto: el nombre interno lleva guion (SAT-Remoto) porque Windows lo usa para
+  // el servicio y la carpeta; en los títulos de ventana se muestra «SAT Remoto».
+  final name = bind.mainGetAppNameSync().replaceAll('-', ' ');
   switch (overrideType ?? kWindowType) {
     case WindowType.Main:
       return name;

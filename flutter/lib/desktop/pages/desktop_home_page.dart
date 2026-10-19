@@ -24,6 +24,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 import '../widgets/button.dart';
+import '../widgets/sat_remoto.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({Key? key}) : super(key: key);
@@ -78,6 +79,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget buildLeftPane(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
+    if (isIncomingOnly) {
+      // SAT Remoto: ventana de «listo para recibir soporte» con la marca de OfficeTech.
+      return buildSatHome(context);
+    }
     final children = <Widget>[
       if (!isOutgoingOnly) buildPresetPasswordWarning(),
       if (bind.isCustomClient())
@@ -172,6 +177,162 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   ),
                 ),
               )
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// SAT Remoto · estado 01 «Listo para soporte». Usa el mismo modelo del motor
+  /// (ID real, estado del servicio, tarjeta de instalación, menú de ajustes).
+  Widget buildSatHome(BuildContext context) {
+    final model = gFFI.serverModel;
+    final content = <Widget>[
+      const SatHeader(),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            buildPresetPasswordWarning(),
+            // Estado real del servicio (Listo / Conectando / sin servicio…).
+            OnlineStatusWidget(
+              onSvcStatusChanged: () {
+                if (isInHomePage()) {
+                  Future.delayed(Duration(milliseconds: 300), () {
+                    _updateWindowSize();
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 14),
+            const Text('Soporte a un clic de distancia',
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: SatColors.text)),
+            const SizedBox(height: 4),
+            const Text('Comparta su ID con el técnico de OfficeTech.',
+                style: TextStyle(fontSize: 15, color: SatColors.secondary)),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
+              decoration: BoxDecoration(
+                color: SatColors.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text('ID de este equipo',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: SatColors.secondary)),
+                      ),
+                      // Menú de siempre (ajustes, etc.).
+                      buildPopupMenu(context),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: model.serverId,
+                          readOnly: true,
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(vertical: 6),
+                          ),
+                          style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: SatColors.text),
+                        ).workaroundFreezeLinuxMint(),
+                      ),
+                      const SizedBox(width: 8),
+                      SatButton(
+                        label: 'Copiar',
+                        icon: Icons.copy_rounded,
+                        tooltip: 'Copiar el ID de este equipo',
+                        onPressed: () {
+                          Clipboard.setData(
+                              ClipboardData(text: model.serverId.text));
+                          showToast('ID copiado');
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text('La conexión requiere su autorización.',
+                      style:
+                          TextStyle(fontSize: 13, color: SatColors.secondary)),
+                ],
+              ),
+            ),
+            buildPasswordBoard(context),
+            FutureBuilder<Widget>(
+              future: Future.value(
+                  Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
+              builder: (_, data) {
+                if (data.hasData) {
+                  if (isInHomePage()) {
+                    Future.delayed(Duration(milliseconds: 300), () {
+                      _updateWindowSize();
+                    });
+                  }
+                  return data.data!;
+                }
+                return const Offstage();
+              },
+            ),
+            const SizedBox(height: 12),
+            const Center(child: SatIllustration(height: 72)),
+            const SizedBox(height: 16),
+            SatButton(
+              label: 'Abrir portal SAT',
+              icon: Icons.open_in_new_rounded,
+              tooltip: kSatPortalUrl,
+              onPressed: satOpenPortal,
+            ),
+            const SizedBox(height: 14),
+            Center(
+              child: InkWell(
+                onTap: () => launchUrl(Uri.parse(kSatWebUrl)),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Text('www.officetech.com.co',
+                      style:
+                          TextStyle(fontSize: 13, color: SatColors.secondary)),
+                ),
+              ),
+            ),
+            // Atribución del proyecto base (licencia AGPL): se conserva.
+            Center(child: loadPowered(context)),
+          ],
+        ),
+      ),
+    ];
+    return ChangeNotifierProvider.value(
+      value: gFFI.serverModel,
+      child: Container(
+        width: 420.0,
+        color: SatColors.body,
+        child: Column(
+          children: [
+            SingleChildScrollView(
+              controller: _leftPaneScrollController,
+              child: Column(
+                key: _childKey,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: content,
+              ),
+            ),
+            Expanded(child: Container(color: SatColors.body)),
           ],
         ),
       ),
