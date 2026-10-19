@@ -9,6 +9,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -413,5 +414,354 @@ class SatSelloVerificado extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+
+// ===========================================================================
+// SAT Remoto #6: autorización y corte desde SAT (SAT v-386, remoto_api.php
+// ?ep=estado y ?ep=pedir). Un SatControl por conexión (connId):
+//  · al llegar la solicitud pregunta a SAT; sin sesión vigente para quien se
+//    conecta, la ventana no ofrece «Aceptar» y deja «Pedir autorización»;
+//  · mientras espera, pregunta cada 5 s (la sesión puede abrirse en SAT o el
+//    administrador aprobar); con la conexión abierta, cada 30 s: si la sesión
+//    dejó de estar vigente (vencida, terminada o cortada en SAT) la cierra.
+//  · si SAT no responde, NO bloquea ni corta: lo avisa en pantalla.
+//  · un equipo que SAT no administra o con la exigencia apagada en SAT se
+//    comporta como antes (solo muestra el técnico si SAT lo confirma).
+// ===========================================================================
+
+enum SatAut {
+  consultando, // primera consulta en curso: aún no se ofrece «Aceptar»
+  autorizado, // sesión vigente en SAT para quien se conecta
+  libre, // SAT no exige (o no administra el equipo): como antes
+  sinSat, // SAT no respondió: no se bloquea, se avisa
+  sinAutorizacion, // sin sesión: no se puede aceptar; puede pedir
+  pidiendo, // solicitud enviada, esperando al administrador
+  rechazada, // el administrador la rechazó: se cierra
+  vencida, // nadie atendió la solicitud a tiempo: puede pedir de nuevo
+  cortada, // la sesión dejó de estar vigente con la conexión abierta
+}
+
+Future<Uri?> _satApi(Map<String, String> q) async {
+  final myId =
+      (await bind.mainGetMyId()).replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+  if (myId.isEmpty) return null;
+  var base = (await bind.mainGetOption(key: 'audit-server')).trim();
+  if (!base.startsWith('https://')) {
+    base = '$kSatPortalUrl/remoto_api.php';
+  }
+  final uri0 = Uri.parse(base);
+  return uri0.replace(
+      path: uri0.path.replaceAll(RegExp(r'/api/audit.*$'), ''),
+      queryParameters: {...q, 'id': myId});
+}
+
+class SatControl {
+  static final Map<int, SatControl> _todos = {};
+
+  /// El control de una conexión; se crea al mostrarse su tarjeta.
+  static SatControl de(int connId, String peerId, String peerNombre) =>
+      _todos.putIfAbsent(
+          connId, () => SatControl._(connId, peerId, peerNombre)..iniciar());
+
+  static SatControl? buscar(int connId) => _todos[connId];
+
+  static void quitar(int connId) {
+    _todos.remove(connId)?._detener();
+  }
+
+  final int connId;
+  final String peer;
+  final String peerNombre;
+  final estado = SatAut.consultando.obs;
+  final tecnico = Rxn<SatTecnicoVerificado>();
+  final restante = RxnInt(); // segundos para que venza la sesión
+  final ocupado = false.obs; // enviando la solicitud
+  final error = ''.obs;
+  String _token = '';
+  bool _conectado = false;
+  bool _terminada = false;
+  Timer? _timer;
+  DateTime? _restanteDesde;
+
+  SatControl._(this.connId, String peerId, this.peerNombre)
+      : peer = peerId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+
+  /// ¿Se puede ofrecer «Aceptar»?
+  bool get puedeAceptar =>
+      estado.value == SatAut.autorizado ||
+      estado.value == SatAut.libre ||
+      estado.value == SatAut.sinSat;
+
+  /// Segundos que faltan, descontando el tiempo desde la última consulta.
+  int? get segundosRestantes {
+    final r = restante.value;
+    if (r == null || _restanteDesde == null) return r;
+    return r - DateTime.now().difference(_restanteDesde!).inSeconds;
+  }
+
+  void iniciar() {
+    _consultar();
+    _programar();
+  }
+
+  void _programar() {
+    _timer?.cancel();
+    if (_terminada) return;
+    _timer = Timer.periodic(Duration(seconds: _conectado ? 30 : 5), (_) {
+      _consultar();
+    });
+  }
+
+  /// Lo llama la tarjeta cada segundo con el estado real del motor.
+  void marcarConexion({required bool autorizada, required bool desconectada}) {
+    if (desconectada) {
+      _terminada = true;
+      _timer?.cancel();
+      return;
+    }
+    if (autorizada && !_conectado) {
+      _conectado = true;
+      _programar();
+    }
+  }
+
+  void _detener() {
+    _terminada = true;
+    _timer?.cancel();
+  }
+
+  void _cerrarConexion() {
+    _terminada = true;
+    _timer?.cancel();
+    bind.cmCloseConnection(connId: connId);
+  }
+
+  Future<void> _consultar() async {
+    if (_terminada || peer.isEmpty) {
+      if (peer.isEmpty && estado.value == SatAut.consultando) {
+        estado.value = SatAut.libre;
+      }
+      return;
+    }
+    Map? j;
+    try {
+      final q = {'ep': 'estado', 'peer': peer};
+      if (_token.isNotEmpty) q['token'] = _token;
+      final uri = await _satApi(q);
+      if (uri != null) {
+        final r = await http.get(uri).timeout(const Duration(seconds: 8));
+        if (r.statusCode == 200) {
+          final d = jsonDecode(utf8.decode(r.bodyBytes));
+          if (d is Map && d['ok'] == true) j = d;
+        }
+      }
+    } catch (_) {}
+    if (_terminada) return;
+    if (j == null) {
+      // SAT no respondió: nunca se bloquea ni se corta por eso.
+      if (!_conectado && estado.value == SatAut.consultando) {
+        estado.value = SatAut.sinSat;
+      }
+      return;
+    }
+    final vigente = j['vigente'] == true;
+    if (vigente) {
+      final nombre = (j['tecnico'] ?? '').toString().trim();
+      if (nombre.isNotEmpty) {
+        tecnico.value = SatTecnicoVerificado(
+            nombre, (j['orden'] ?? '').toString().trim(),
+            registrado: j['verificado'] == true);
+      }
+      final r = j['restante'];
+      restante.value = r is int ? r : int.tryParse('$r');
+      _restanteDesde = DateTime.now();
+    }
+    final exige = j['exige'] == true && j['gestionado'] == true;
+    if (!exige) {
+      estado.value = vigente ? SatAut.autorizado : SatAut.libre;
+      return;
+    }
+    if (vigente) {
+      estado.value = SatAut.autorizado;
+      return;
+    }
+    // Exige y no hay sesión vigente para quien se conecta.
+    tecnico.value = null;
+    restante.value = null;
+    if (_conectado) {
+      estado.value = SatAut.cortada;
+      _cerrarConexion();
+      return;
+    }
+    final sol = j['solicitud'];
+    final se = sol is Map ? (sol['estado'] ?? '').toString() : '';
+    if (se == 'pendiente') {
+      estado.value = SatAut.pidiendo;
+    } else if (se == 'rechazada') {
+      estado.value = SatAut.rechazada;
+      final m = sol is Map ? (sol['motivo'] ?? '').toString().trim() : '';
+      error.value = m;
+      Future.delayed(const Duration(seconds: 6), _cerrarConexion);
+      _timer?.cancel();
+    } else if (se == 'vencida') {
+      estado.value = SatAut.vencida;
+      _token = '';
+    } else if (se == 'aprobada') {
+      // aprobada pero ya no vigente (venció la ventana): pedir de nuevo
+      estado.value = SatAut.vencida;
+      _token = '';
+    } else {
+      estado.value = SatAut.sinAutorizacion;
+    }
+  }
+
+  /// «Pedir autorización»: avisa a los administradores de OfficeTech.
+  Future<void> pedir() async {
+    if (ocupado.value || _terminada) return;
+    ocupado.value = true;
+    error.value = '';
+    try {
+      final uri = await _satApi({'ep': 'pedir'});
+      if (uri == null) throw Exception();
+      final myId = uri.queryParameters['id'] ?? '';
+      final r = await http
+          .post(uri.replace(queryParameters: {'ep': 'pedir'}),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(
+                  {'id': myId, 'peer': peer, 'nombre': peerNombre}))
+          .timeout(const Duration(seconds: 10));
+      final d = jsonDecode(utf8.decode(r.bodyBytes));
+      if (d is Map && d['ok'] == true) {
+        if (d['ya_autorizada'] == true) {
+          await _consultar();
+        } else {
+          _token = (d['token'] ?? '').toString();
+          estado.value = SatAut.pidiendo;
+        }
+      } else {
+        error.value = (d is Map ? (d['error'] ?? '') : '').toString();
+        if (error.value.isEmpty) error.value = 'SAT no recibió la solicitud.';
+      }
+    } catch (_) {
+      error.value =
+          'No se pudo enviar la solicitud a SAT. Revise el internet o llame a OfficeTech.';
+    }
+    ocupado.value = false;
+  }
+}
+
+/// Recuadro de estado de la autorización en SAT (bajo los datos del técnico).
+class SatAvisoAutorizacion extends StatelessWidget {
+  final SatControl control;
+  final bool conectado;
+  const SatAvisoAutorizacion(
+      {Key? key, required this.control, required this.conectado})
+      : super(key: key);
+
+  Widget _caja(IconData icono, Color color, Color fondo, String titulo,
+      String texto) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: fondo,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.6)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icono, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(titulo,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: color)),
+                if (texto.isNotEmpty) const SizedBox(height: 2),
+                if (texto.isNotEmpty)
+                  Text(texto,
+                      style: const TextStyle(
+                          fontSize: 13, color: SatColors.text)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const ambar = Color(0xFFB54708);
+    const ambarFondo = Color(0xFFFFFAEB);
+    return Obx(() {
+      final err = control.error.value;
+      switch (control.estado.value) {
+        case SatAut.consultando:
+          return conectado
+              ? const SizedBox.shrink()
+              : _caja(Icons.hourglass_top, SatColors.secondary,
+                  SatColors.surface, 'Verificando con SAT…', '');
+        case SatAut.sinSat:
+          return conectado
+              ? const SizedBox.shrink()
+              : _caja(Icons.cloud_off, ambar, ambarFondo,
+                  'No se pudo verificar con SAT',
+                  'Acepte solo si está esperando a OfficeTech.');
+        case SatAut.sinAutorizacion:
+          return _caja(
+              Icons.block,
+              SatColors.danger,
+              SatColors.dangerSurface,
+              'Sin autorización en SAT',
+              'Esta conexión no tiene una sesión abierta en SAT, así que no se puede aceptar. '
+                  'Si está esperando a OfficeTech, pulse «Pedir autorización».'
+                  '${err.isNotEmpty ? '\n$err' : ''}');
+        case SatAut.pidiendo:
+          return _caja(Icons.notifications_active, ambar, ambarFondo,
+              'Solicitud enviada a OfficeTech',
+              'Esperando que un administrador la apruebe. No cierre esta ventana.');
+        case SatAut.vencida:
+          return _caja(
+              Icons.timer_off,
+              ambar,
+              ambarFondo,
+              'La solicitud venció sin respuesta',
+              'Puede pedirla de nuevo o llamar a OfficeTech.'
+                  '${err.isNotEmpty ? '\n$err' : ''}');
+        case SatAut.rechazada:
+          return _caja(
+              Icons.cancel,
+              SatColors.danger,
+              SatColors.dangerSurface,
+              'OfficeTech rechazó esta conexión',
+              '${err.isNotEmpty ? 'Motivo: $err. ' : ''}La ventana se cerrará.');
+        case SatAut.cortada:
+          return _caja(
+              Icons.stop_circle,
+              SatColors.danger,
+              SatColors.dangerSurface,
+              'SAT terminó esta sesión',
+              'Se agotó el tiempo autorizado o OfficeTech la cortó. La conexión se cerró.');
+        case SatAut.autorizado:
+          final s = control.segundosRestantes;
+          if (conectado && s != null && s <= 300 && s > 0) {
+            final min = (s / 60).ceil();
+            return _caja(Icons.schedule, ambar, ambarFondo,
+                'La sesión vence en $min min',
+                'Al vencer, la conexión se cierra sola. El técnico puede pedir la prórroga en SAT.');
+          }
+          return const SizedBox.shrink();
+        case SatAut.libre:
+          return const SizedBox.shrink();
+      }
+    });
   }
 }
