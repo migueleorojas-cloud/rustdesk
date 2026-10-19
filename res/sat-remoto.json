@@ -12,7 +12,7 @@
     "display-name": "Técnico OfficeTech",
     "hide-server-settings": "Y",
     "hide-network-settings": "Y",
-    "hide-help-cards": "Y",
     "hide-username-on-card": "Y"
-  }
+  },
+  "conn-type": "incoming"
 }
