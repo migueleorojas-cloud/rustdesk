@@ -245,6 +245,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                           readOnly: true,
                           decoration: const InputDecoration(
                             border: InputBorder.none,
+                            filled: false,
                             isDense: true,
                             contentPadding: EdgeInsets.symmetric(vertical: 6),
                           ),
@@ -317,7 +318,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ),
       ),
     ];
-    return ChangeNotifierProvider.value(
+    // La ventana de SAT Remoto es clara siempre: con Windows en modo oscuro los
+    // campos y textos heredaban el tema oscuro (texto oscuro sobre fondo oscuro).
+    return Theme(
+      data: MyTheme.lightTheme,
+      child: ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
         width: 420.0,
@@ -336,6 +341,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ],
         ),
       ),
+    ),
     );
   }
 
