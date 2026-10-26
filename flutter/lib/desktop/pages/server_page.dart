@@ -94,9 +94,15 @@ class _DesktopServerPageState extends State<DesktopServerPage>
       ],
       child: Consumer<ServerModel>(
         builder: (context, serverModel, child) {
-          final body = Scaffold(
-            backgroundColor: Theme.of(context).colorScheme.background,
-            body: ConnectionManager(),
+          // SAT Remoto: ventana de conexión siempre clara, también con Windows en modo oscuro.
+          final body = Theme(
+            data: MyTheme.lightTheme,
+            child: Builder(
+              builder: (context) => Scaffold(
+                backgroundColor: Theme.of(context).colorScheme.background,
+                body: ConnectionManager(),
+              ),
+            ),
           );
           return isLinux
               ? buildVirtualWindowFrame(context, body)
