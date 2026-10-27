@@ -8,6 +8,10 @@
 //  3. Conectar: SAT abre la sesión (o pide autorización a un administrador) con las mismas
 //     reglas de la Conexión rápida y la deja atada al ID de este PC; luego se conecta aquí.
 //  4. Mientras tanto: estado y minutos de la sesión, notas a la bitácora y «Terminar».
+//  5. (SAT v-475) Equipos con acceso desatendido: la app pide a SAT la clave de un solo uso de
+//     la sesión (op=clave) cuando el agente del equipo ya la puso, y se conecta con ella sin que
+//     nadie acepte. «Mis sesiones abiertas» (op=mis_sesiones) lista todas las sesiones vigentes
+//     del técnico para volver a cada una (nota, terminar, reconectar).
 
 import 'dart:async';
 import 'dart:convert';
@@ -63,6 +67,11 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
   Timer? _tEstado;
   String _aviso = '';
 
+  // Mis sesiones abiertas (todas las vigentes del técnico, en cualquier equipo)
+  List<Map> _misSesiones = [];
+  Timer? _tMis;
+  bool _esperandoClave = false;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +82,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
   void dispose() {
     _tVinculo?.cancel();
     _tEstado?.cancel();
+    _tMis?.cancel();
     _idCliente.dispose();
     _quien.dispose();
     _tel.dispose();
@@ -121,10 +131,12 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     _SatTecSesion.tecnico = '';
     _SatTecSesion.expira = '';
     _tEstado?.cancel();
+    _tMis?.cancel();
     if (mounted) {
       setState(() {
         _ficha = null;
         _estado = null;
+        _misSesiones = [];
       });
     }
   }
@@ -173,6 +185,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
         _secreto = '';
         _error = '';
       });
+      _cargarMisSesiones();
       return;
     }
     setState(() {
@@ -267,16 +280,77 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     final t = (j['ticket'] as num?)?.toInt() ?? 0;
     if (t > 0) _ticket = t;
     setState(() => _aviso = (j['msg'] ?? '').toString());
-    if (j['modo'] == 'directo') {
-      _abrirConexion();
-    }
     await _consultarEstado();
+    _cargarMisSesiones();
+    if (j['modo'] == 'directo') {
+      await _abrirConexion();
+    }
   }
 
-  void _abrirConexion() {
+  /// Conecta al equipo de la ficha. Si la sesión es desatendida (SAT v-475), espera a que el agente del
+  /// equipo ponga la clave de la sesión (máximo ~1 minuto) y se conecta con ella: nadie tiene que aceptar.
+  Future<void> _abrirConexion() async {
     final f = _ficha;
-    if (f == null) return;
-    connect(context, f['id'].toString());
+    if (f == null || _esperandoClave) return;
+    final id = f['id'].toString();
+    if (_estado?['desatendido'] != true) {
+      connect(context, id);
+      return;
+    }
+    setState(() {
+      _esperandoClave = true;
+      _error = '';
+    });
+    String clave = '';
+    String falla = '';
+    for (var i = 0; i < 15 && mounted; i++) {
+      final j = await _api({'op': 'clave', 'id': id});
+      if (j['ok'] != true) {
+        falla = (j['error'] ?? 'SAT no entregó la clave.').toString();
+        break;
+      }
+      if (j['desatendido'] != true) break; // dejó de ser desatendido: conexión normal (el usuario acepta)
+      if (j['lista'] == true && (j['clave'] ?? '').toString().isNotEmpty) {
+        clave = j['clave'].toString();
+        break;
+      }
+      await Future.delayed(const Duration(seconds: 4));
+    }
+    if (!mounted) return;
+    setState(() => _esperandoClave = false);
+    if (falla.isNotEmpty) {
+      setState(() => _error = falla);
+      return;
+    }
+    if (clave.isEmpty && _estado?['desatendido'] == true) {
+      setState(() => _aviso = 'El equipo todavía no tiene la clave de la sesión (¿apagado o sin el agente 1.13?). '
+          'Se conecta de la forma normal: el usuario debe aceptar.');
+    }
+    connect(context, id, password: clave.isEmpty ? null : clave);
+  }
+
+  // ------------------------------------------------------------------ mis sesiones abiertas
+  Future<void> _cargarMisSesiones() async {
+    _tMis?.cancel();
+    if (_SatTecSesion.token.isEmpty) return;
+    final j = await _api({'op': 'mis_sesiones'});
+    if (!mounted) return;
+    if (j['ok'] == true) {
+      setState(() => _misSesiones = ((j['sesiones'] as List?) ?? []).cast<Map>());
+    }
+    if (_SatTecSesion.token.isNotEmpty) {
+      _tMis = Timer(const Duration(seconds: 30), _cargarMisSesiones);
+    }
+  }
+
+  /// Lleva la ficha a esa sesión (nota, terminar) y, si se pide, se conecta.
+  Future<void> _irASesion(String id, {bool conectar = false}) async {
+    if (id.isEmpty) return;
+    _idCliente.text = id;
+    await _buscar();
+    if (!mounted || !conectar) return;
+    final est = (_estado?['estado'] ?? '').toString();
+    if (est == 'autorizada' || est == 'activa') await _abrirConexion();
   }
 
   Future<void> _enviarNota() async {
@@ -300,6 +374,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     if (!mounted) return;
     setState(() => _aviso = (j['msg'] ?? j['error'] ?? '').toString());
     await _consultarEstado();
+    _cargarMisSesiones();
   }
 
   // ------------------------------------------------------------------ pantalla
@@ -462,6 +537,56 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
       ]),
       if (f != null) ..._vistaFicha(f, hayMiSesion),
       if (_aviso.isNotEmpty) _cajaMensaje(_aviso),
+      if (_misSesiones.isNotEmpty) _vistaMisSesiones(),
+    ]);
+  }
+
+  Widget _vistaMisSesiones() {
+    final actual = (_ficha?['id'] ?? '').toString();
+    return _tarjeta([
+      Row(children: [
+        Expanded(
+          child: Text('Mis sesiones abiertas (${_misSesiones.length})',
+              style: const TextStyle(fontWeight: FontWeight.bold, color: SatColors.text)),
+        ),
+        IconButton(
+          tooltip: 'Actualizar',
+          icon: const Icon(Icons.refresh, size: 20),
+          onPressed: _cargarMisSesiones,
+        ),
+      ]),
+      for (final s in _misSesiones)
+        Container(
+          margin: const EdgeInsets.only(top: 6),
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+          decoration: BoxDecoration(
+            color: (s['id'] ?? '').toString() == actual ? SatColors.infoSurface : Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                    '${s['estado'] == 'activa' ? '🟢' : '🔓'} ${s['orden']} · ${s['cliente']}${s['desatendido'] == true ? ' · 🔑' : ''}',
+                    style: const TextStyle(fontWeight: FontWeight.w600, color: SatColors.text)),
+                Text(
+                    '${s['equipo']}${(s['id'] ?? '').toString().isNotEmpty ? ' · ID ${s['id']}' : ''} · '
+                    '${s['estado'] == 'activa' ? 'quedan' : 'para conectarse'} ${s['restan_min']} min',
+                    style: const TextStyle(fontSize: 12.5, color: SatColors.secondary)),
+              ]),
+            ),
+            if ((s['id'] ?? '').toString().isNotEmpty) ...[
+              TextButton(
+                onPressed: _ocupado ? null : () => _irASesion(s['id'].toString()),
+                child: const Text('Ver'),
+              ),
+              TextButton(
+                onPressed: _ocupado || _esperandoClave ? null : () => _irASesion(s['id'].toString(), conectar: true),
+                child: const Text('Conectar'),
+              ),
+            ],
+          ]),
+        ),
     ]);
   }
 
@@ -498,7 +623,20 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
         ),
         const SizedBox(height: 10),
         if (hayMiSesion)
-          SatButton(label: 'Conectar al equipo', icon: Icons.desktop_windows_rounded, kind: SatButtonKind.primary, onPressed: _abrirConexion),
+          SatButton(
+              label: _esperandoClave
+                  ? 'Esperando la clave del equipo…'
+                  : (_estado?['desatendido'] == true ? 'Conectar (acceso desatendido 🔑)' : 'Conectar al equipo'),
+              icon: Icons.desktop_windows_rounded,
+              kind: SatButtonKind.primary,
+              onPressed: _esperandoClave ? null : _abrirConexion),
+        if (hayMiSesion && _estado?['desatendido'] == true)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('Equipo con acceso desatendido autorizado por el cliente: entra con la clave de esta sesión, '
+                'sin que nadie acepte. Puede reconectarse mientras la sesión siga abierta.',
+                style: TextStyle(fontSize: 12.5, color: SatColors.secondary)),
+          ),
         if (hayMiSesion) _campo(_nota, 'Nota para la bitácora de la orden', pista: 'Qué hizo o encontró', lineas: 2),
         if (hayMiSesion) const SizedBox(height: 8),
         if (hayMiSesion)

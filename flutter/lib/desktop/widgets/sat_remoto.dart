@@ -524,6 +524,11 @@ class SatControl {
     if (autorizada && !_conectado) {
       _conectado = true;
       _programar();
+      // Entró con clave (acceso desatendido) sin pasar por «Aceptar»: se confirma ya con SAT y, si no hay sesión
+      // vigente para quien se conecta, se corta enseguida en vez de esperar la consulta de los 30 s.
+      if (estado.value != SatAut.autorizado && estado.value != SatAut.libre) {
+        _consultar();
+      }
     }
   }
 
