@@ -25,6 +25,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 import '../widgets/button.dart';
 import '../widgets/sat_remoto.dart';
+import '../widgets/sat_tecnico.dart';
 
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({Key? key}) : super(key: key);
@@ -59,6 +60,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    // SAT Remoto Técnico: la compilación de técnicos (solo saliente) abre en su propia pantalla.
+    if (bind.isOutgoingOnly()) {
+      return _buildBlock(child: const SatTecnicoHome());
+    }
     final isIncomingOnly = bind.isIncomingOnly();
     return _buildBlock(
         child: Row(
