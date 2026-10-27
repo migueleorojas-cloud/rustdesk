@@ -12,9 +12,11 @@
 //     la sesión (op=clave) cuando el agente del equipo ya la puso, y se conecta con ella sin que
 //     nadie acepte. «Mis sesiones abiertas» (op=mis_sesiones) lista todas las sesiones vigentes
 //     del técnico para volver a cada una (nota, terminar, reconectar).
-//  6. (SAT v-477) El botón «Conectar» de SAT web abre «sat-remoto-tecnico://sat/<ID>»: la app recibe el ID
+//  6. (SAT v-480) El botón «Conectar» de SAT web abre «sat-remoto-tecnico://sat/<ID>»: la app recibe el ID
 //     (sat_enlace.dart), lo busca y se conecta si ya hay sesión. La versión portable se anota sola en Windows
 //     (solo para el usuario, sin permisos de administrador) cada vez que se abre; la instalada (MSI) ya lo trae.
+//  7. (SAT v-479) Seguimiento técnico de la orden (op=avances / op=avance): los mismos avances de SAT, con el
+//     ✅ Cierre / informe final. Fotos, firma y cierre formal de la orden siguen en SAT.
 
 import 'dart:async';
 import 'dart:convert';
@@ -64,7 +66,14 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
   final TextEditingController _quien = TextEditingController();
   final TextEditingController _tel = TextEditingController();
   final TextEditingController _falla = TextEditingController();
-  final TextEditingController _nota = TextEditingController();
+  // Seguimiento técnico de la orden (SAT v-479: los mismos avances de la orden)
+  Map<String, dynamic>? _seg;
+  int _segTicket = 0;
+  String _tipoAv = 'diagnostico';
+  String _resAv = '';
+  final TextEditingController _textoAv = TextEditingController();
+  final TextEditingController _recAv = TextEditingController();
+  bool _guardandoAv = false;
 
   // Sesión remota sobre el equipo
   Map<String, dynamic>? _estado;
@@ -144,7 +153,8 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     _quien.dispose();
     _tel.dispose();
     _falla.dispose();
-    _nota.dispose();
+    _textoAv.dispose();
+    _recAv.dispose();
     super.dispose();
   }
 
@@ -270,6 +280,9 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
       _ficha = null;
       _estado = null;
       _ticket = -1;
+      _seg = null;
+      _segTicket = 0;
+      _recAv.clear();
     });
     final j = await _api({'op': 'ficha', 'id': id});
     if (!mounted) return;
@@ -299,6 +312,8 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     if (est == 'esperando' || est == 'autorizada' || est == 'activa') {
       _tEstado = Timer(Duration(seconds: est == 'esperando' ? 5 : 20), _consultarEstado);
     }
+    final t = (j['ticket'] as num?)?.toInt() ?? 0;
+    if ((est == 'autorizada' || est == 'activa') && t > 0 && t != _segTicket) _cargarSeguimiento(t);
   }
 
   Future<void> _conectar() async {
@@ -411,18 +426,128 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     if (est == 'autorizada' || est == 'activa') await _abrirConexion();
   }
 
-  Future<void> _enviarNota() async {
-    final t = (_estado?['ticket'] as num?)?.toInt() ?? (_ticket > 0 ? _ticket : 0);
-    final txt = _nota.text.trim();
-    if (t <= 0 || txt.length < 3) return;
-    final j = await _api({'op': 'nota', 'ticket': t, 'texto': txt});
-    if (!mounted) return;
-    if (j['ok'] == true) {
-      _nota.clear();
-      showToast('Nota guardada en la orden');
-    } else {
-      setState(() => _error = (j['error'] ?? 'No se pudo guardar la nota.').toString());
+  // ------------------------------------------------------------------ seguimiento técnico
+  Future<void> _cargarSeguimiento(int t) async {
+    if (t <= 0) return;
+    final j = await _api({'op': 'avances', 'ticket': t});
+    if (!mounted || j['ok'] != true) return;
+    setState(() {
+      _seg = j;
+      _segTicket = t;
+      if (_recAv.text.isEmpty) _recAv.text = (j['recomendaciones'] ?? '').toString();
+    });
+  }
+
+  Future<void> _guardarAvance() async {
+    final t = (_estado?['ticket'] as num?)?.toInt() ?? 0;
+    if (t <= 0 || _guardandoAv) return;
+    if (_resAv.isEmpty) {
+      setState(() => _error = 'Escoja el resultado del avance.');
+      return;
     }
+    setState(() {
+      _guardandoAv = true;
+      _error = '';
+    });
+    final cuerpo = <String, dynamic>{'op': 'avance', 'ticket': t, 'tipo': _tipoAv, 'resultado': _resAv, 'texto': _textoAv.text.trim()};
+    if (_tipoAv == 'cierre') cuerpo['recomendaciones'] = _recAv.text.trim();
+    final j = await _api(cuerpo);
+    if (!mounted) return;
+    setState(() => _guardandoAv = false);
+    if (j['ok'] == true) {
+      setState(() {
+        _seg = j;
+        _segTicket = t;
+        _textoAv.clear();
+        _resAv = '';
+        _tipoAv = 'diagnostico';
+      });
+      showToast((j['msg'] ?? 'Avance guardado').toString());
+    } else {
+      setState(() => _error = (j['error'] ?? 'No se pudo guardar el avance.').toString());
+    }
+  }
+
+  static const Map<String, String> _iconosAv = {
+    'diagnostico': '🔍', 'reparacion': '🔧', 'cambio_pieza': '🔩', 'prueba': '🧪', 'otro': '📝', 'cierre': '✅'
+  };
+
+  List<Widget> _vistaSeguimiento() {
+    final g = _seg;
+    if (g == null) {
+      return [const Padding(padding: EdgeInsets.only(top: 10), child: Text('Cargando el seguimiento de la orden…', style: TextStyle(color: SatColors.secondary)))];
+    }
+    final avs = ((g['avances'] as List?) ?? []).cast<Map>();
+    final tipos = ((g['tipos'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), v.toString()));
+    final res = ((g['resultados'] as Map?) ?? {}).map((k, v) => MapEntry(k.toString(), v.toString()));
+    final esCierre = _tipoAv == 'cierre';
+    final w = <Widget>[
+      const SizedBox(height: 14),
+      const Text('📋 Seguimiento técnico', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: SatColors.text)),
+      const Text('Cada avance queda con fecha, hora y técnico, y el cliente lo ve en el acta. El último es el ✅ Cierre / informe final.',
+          style: TextStyle(fontSize: 12.5, color: SatColors.secondary)),
+      for (final a in avs)
+        Container(
+          margin: const EdgeInsets.only(top: 6),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: a['tipo'] == 'cierre' ? const Color(0xFFF0FDF4) : Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${_iconosAv[a['tipo']] ?? '📝'} ${a['tipo_txt']} · ${a['resultado_txt']}',
+                style: const TextStyle(fontWeight: FontWeight.w600, color: SatColors.text)),
+            Text('${a['fecha']} · ${a['autor']}', style: const TextStyle(fontSize: 11.5, color: SatColors.secondary)),
+            const SizedBox(height: 2),
+            Text((a['texto'] ?? '').toString(), style: const TextStyle(color: SatColors.text)),
+          ]),
+        ),
+    ];
+    if (g['abierta'] != true) {
+      w.add(_cajaMensaje('La orden ${g['orden']} está ${g['estado']}: el seguimiento ya no admite avances.'));
+      return w;
+    }
+    w.addAll([
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: tipos.containsKey(_tipoAv) ? _tipoAv : null,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Tipo de avance', filled: true, fillColor: Colors.white, border: OutlineInputBorder(), isDense: true),
+            items: [for (final e in tipos.entries) DropdownMenuItem(value: e.key, child: Text('${_iconosAv[e.key] ?? ''} ${e.value}'))],
+            onChanged: (v) => setState(() {
+              _tipoAv = v ?? 'diagnostico';
+              if (_tipoAv == 'cierre' && _resAv.isEmpty) _resAv = 'exitoso';
+            }),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: res.containsKey(_resAv) ? _resAv : null,
+            isExpanded: true,
+            hint: const Text('— Escoja —'),
+            decoration: const InputDecoration(labelText: 'Resultado', filled: true, fillColor: Colors.white, border: OutlineInputBorder(), isDense: true),
+            items: [for (final e in res.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+            onChanged: (v) => setState(() => _resAv = v ?? ''),
+          ),
+        ),
+      ]),
+      const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: Text('👁 El cliente ve este texto en el acta. Lo que sea solo para la oficina va en Notas, en SAT.',
+            style: TextStyle(fontSize: 12, color: SatColors.secondary)),
+      ),
+      _campo(_textoAv, esCierre ? 'Informe final: cómo queda el equipo y qué se le hizo *' : '¿Qué encontró o qué hizo? *',
+          pista: esCierre
+              ? 'Ej.: Se limpió la cola de impresión y se reinstaló el controlador; imprime normal.'
+              : 'Ej.: Se cambió la fuente; enciende pero se reinicia al cargar el sistema. Se deja en prueba.',
+          lineas: 3),
+      if (esCierre) _campo(_recAv, 'Recomendaciones (opcional)', lineas: 2),
+      const SizedBox(height: 8),
+    ]);
+    return w;
   }
 
   Future<void> _terminar() async {
@@ -456,6 +581,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (_SatTecSesion.token.isEmpty) _vistaInicio() else _vistaTecnico(),
+                        if (_SatTecSesion.token.isEmpty && _aviso.isNotEmpty) _cajaMensaje(_aviso),
                         if (_error.isNotEmpty) _cajaMensaje(_error, error: true),
                         const SizedBox(height: 16),
                         Center(
@@ -695,12 +821,17 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
                 'sin que nadie acepte. Puede reconectarse mientras la sesión siga abierta.',
                 style: TextStyle(fontSize: 12.5, color: SatColors.secondary)),
           ),
-        if (hayMiSesion) _campo(_nota, 'Nota para la bitácora de la orden', pista: 'Qué hizo o encontró', lineas: 2),
-        if (hayMiSesion) const SizedBox(height: 8),
+        if (hayMiSesion) ..._vistaSeguimiento(),
         if (hayMiSesion)
           Row(children: [
-            Expanded(child: SatButton(label: 'Guardar nota', icon: Icons.note_add_outlined, onPressed: _enviarNota)),
-            const SizedBox(width: 8),
+            if (_seg?['abierta'] == true)
+              Expanded(
+                  child: SatButton(
+                      label: _guardandoAv ? 'Guardando…' : 'Guardar avance',
+                      icon: Icons.save_outlined,
+                      kind: SatButtonKind.primary,
+                      onPressed: _guardandoAv ? null : _guardarAvance)),
+            if (_seg?['abierta'] == true) const SizedBox(width: 8),
             Expanded(child: SatButton(label: 'Terminar sesión', icon: Icons.stop_circle_outlined, kind: SatButtonKind.danger, onPressed: _terminar)),
           ]),
         const SizedBox(height: 8),
@@ -709,7 +840,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
             final t = (_estado?['ticket'] as num?)?.toInt() ?? 0;
             launchUrl(Uri.parse(t > 0 ? '$kSatPortalUrl/ticket.php?id=$t' : kSatPortalUrl));
           },
-          child: const Text('Abrir la orden en SAT (informe, solución y firma)'),
+          child: const Text('Abrir la orden en SAT (fotos, firma y cierre)'),
         ),
       ]));
       return w;
