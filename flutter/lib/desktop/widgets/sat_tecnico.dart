@@ -12,6 +12,9 @@
 //     la sesión (op=clave) cuando el agente del equipo ya la puso, y se conecta con ella sin que
 //     nadie acepte. «Mis sesiones abiertas» (op=mis_sesiones) lista todas las sesiones vigentes
 //     del técnico para volver a cada una (nota, terminar, reconectar).
+//  6. (SAT v-477) El botón «Conectar» de SAT web abre «sat-remoto-tecnico://sat/<ID>»: la app recibe el ID
+//     (sat_enlace.dart), lo busca y se conecta si ya hay sesión. La versión portable se anota sola en Windows
+//     (solo para el usuario, sin permisos de administrador) cada vez que se abre; la instalada (MSI) ya lo trae.
 
 import 'dart:async';
 import 'dart:convert';
@@ -24,6 +27,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/platform_model.dart';
+import 'sat_enlace.dart';
 import 'sat_remoto.dart';
 
 const String kSatTecApi = '$kSatPortalUrl/remoto_tec_api.php';
@@ -72,10 +76,61 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
   Timer? _tMis;
   bool _esperandoClave = false;
 
+  // Enlace desde SAT web (ID pedido antes de tener sesión de técnico)
+  String _idPendiente = '';
+
   @override
   void initState() {
     super.initState();
     _cargarMiId();
+    SatEnlace.listo = true;
+    SatEnlace.id.addListener(_enlaceRecibido);
+    if (SatEnlace.id.value.isNotEmpty) Future.microtask(_enlaceRecibido);
+    _registrarEnlace();
+  }
+
+  /// Portable: deja anotado en Windows (HKCU, solo este usuario) que los enlaces de SAT abren este ejecutable. Se
+  /// repite solo si cambió la ruta. Instalada: el MSI ya registró el enlace; se quita el del usuario para no tapar al
+  /// del instalador.
+  Future<void> _registrarEnlace() async {
+    if (!Platform.isWindows) return;
+    try {
+      final esquema = bind.mainUriPrefixSync().replaceAll('://', '');
+      if (esquema.isEmpty) return;
+      final clave = 'HKCU\\Software\\Classes\\$esquema';
+      if (bind.mainIsInstalled()) {
+        if (bind.mainGetLocalOption(key: 'sat-enlace-exe').isNotEmpty) {
+          await Process.run('reg', ['delete', clave, '/f']);
+          await bind.mainSetLocalOption(key: 'sat-enlace-exe', value: '');
+        }
+        return;
+      }
+      final exe = Platform.resolvedExecutable;
+      if (bind.mainGetLocalOption(key: 'sat-enlace-exe') == exe) return;
+      await Process.run('reg', ['add', clave, '/ve', '/d', 'URL:SAT Remoto Técnico', '/f']);
+      await Process.run('reg', ['add', clave, '/v', 'URL Protocol', '/d', '', '/f']);
+      await Process.run('reg', ['add', '$clave\\DefaultIcon', '/ve', '/d', '"$exe",0', '/f']);
+      final r = await Process.run('reg', ['add', '$clave\\shell\\open\\command', '/ve', '/d', '"$exe" "%1"', '/f']);
+      if (r.exitCode == 0) await bind.mainSetLocalOption(key: 'sat-enlace-exe', value: exe);
+    } catch (_) {}
+  }
+
+  void _enlaceRecibido() {
+    final id = SatEnlace.id.value;
+    if (id.isEmpty || !mounted) return;
+    _idPendiente = id;
+    if (_SatTecSesion.token.isNotEmpty) {
+      _atenderEnlace();
+    } else {
+      setState(() => _aviso = 'SAT pidió conectarse al equipo $id. Inicie sesión de técnico y la app sigue con ese equipo.');
+    }
+  }
+
+  Future<void> _atenderEnlace() async {
+    final id = _idPendiente;
+    if (id.isEmpty) return;
+    _idPendiente = '';
+    await _irASesion(id, conectar: true);
   }
 
   @override
@@ -83,6 +138,8 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
     _tVinculo?.cancel();
     _tEstado?.cancel();
     _tMis?.cancel();
+    SatEnlace.id.removeListener(_enlaceRecibido);
+    SatEnlace.listo = false;
     _idCliente.dispose();
     _quien.dispose();
     _tel.dispose();
@@ -186,6 +243,7 @@ class _SatTecnicoHomeState extends State<SatTecnicoHome> {
         _error = '';
       });
       _cargarMisSesiones();
+      if (_idPendiente.isNotEmpty) _atenderEnlace();
       return;
     }
     setState(() {
