@@ -46,6 +46,7 @@ import 'package:flutter_hbb/native/win32.dart'
 import 'package:flutter_hbb/native/common.dart'
     if (dart.library.html) 'package:flutter_hbb/web/common.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
+import 'desktop/widgets/sat_enlace.dart';
 
 final globalKey = GlobalKey<NavigatorState>();
 final navigationBarKey = GlobalKey();
@@ -2254,6 +2255,11 @@ setEnvTerminalAdmin() {
 
 // uri link handler
 bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
+  // SAT Remoto Técnico: el enlace del botón «Conectar» de SAT solo deja el ID a la pantalla de técnicos.
+  if (satTecnicoTomarEnlace(cmdArgs: cmdArgs, uri: uri, uriString: uriString)) {
+    if (SatEnlace.listo) windowOnTop(null);
+    return false;
+  }
   List<String>? args;
   if (cmdArgs != null && cmdArgs.isNotEmpty) {
     args = cmdArgs;
