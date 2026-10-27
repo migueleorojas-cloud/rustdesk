@@ -2650,7 +2650,8 @@ fn apply_custom_client(mut data: std::collections::HashMap<String, serde_json::V
 /// vez renombrando `RustDesk*.toml` → `<AppName>*.toml`. Así el ID registrado en SAT no cambia.
 fn migrate_legacy_config() {
     let app_name = config::APP_NAME.read().unwrap().clone();
-    if app_name == SAT_REMOTO_LEGACY_APP_NAME {
+    // La app de técnicos es portable y suele correr en PC de clientes: nunca hereda su configuración.
+    if app_name == SAT_REMOTO_LEGACY_APP_NAME || app_name.ends_with("-Tecnico") {
         return;
     }
     let new_dir = Config::path("");
