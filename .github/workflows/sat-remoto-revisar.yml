@@ -40,6 +40,7 @@ jobs:
           flutter pub get
           flutter analyze --no-fatal-infos --no-fatal-warnings \
             lib/desktop/widgets/sat_remoto.dart \
+            lib/desktop/widgets/sat_tecnico.dart \
             lib/desktop/pages/desktop_home_page.dart \
             lib/desktop/pages/server_page.dart \
             lib/common.dart \
