@@ -91,6 +91,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   // Uri links dispatch
   HWND hwnd = ::FindWindowW(getWindowClassName(), app_name.c_str());
+  if (hwnd == NULL) {
+    // SAT Remoto: the window title shows the app name with spaces instead of hyphens
+    // (getWindowName in common.dart), so look it up by that title too.
+    std::wstring title = app_name;
+    std::replace(title.begin(), title.end(), L'-', L' ');
+    if (title != app_name) {
+      hwnd = ::FindWindowW(getWindowClassName(), title.c_str());
+    }
+  }
   if (hwnd != NULL) {
     // Allow multiple flutter instances when being executed by parameters
     // contained in whitelists.
